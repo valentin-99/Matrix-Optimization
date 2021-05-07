@@ -1,0 +1,139 @@
+Nume: Croitoru Nicolae-Valentin
+Grupa: 334CC
+
+Tema 2
+
+Organizare:
+    Am inceput implementarea fisierele sursa din schelet.
+
+    solver_blas:
+    - Am alocat memorie pentru
+        - C: matricea rezultat
+        - aux1, aux2, aux3: matricile unde tin rezultatele partiale.
+    - Pentru calcularea lui C, am descompus operatiile astfel:
+        aux1 = A × B
+            - Folosesc dcopy pentru a copia in aux1 continutul lui B
+            - Folosesc dtrmm pentru a inmulti A x B.
+        aux2 = aux1 × B_t + 0_(NxN)
+            - Folosesc dgemm pentru a aduna aux1 x B_t cu o matrice nula, aux2,
+            in care se stocheaza rezultatul
+        aux3 = A_t × A + 0_(NxN)
+            - Folosesc dcopy pentru a copia in aux3 continutul lui A
+            - Folosesc dtrmm pentru a inmulti A_t x A.
+        C = aux2 + aux3
+            - Fac adunarea finala cu for-uri
+    - Am tinut cont de faptul ca A este matrice triunghiulara, folosind dtrmm
+    unde a fost cazul. La a doua inmultire am folosit dgemm pentru ca nu am mai
+    avut nicio matrice triunghiulara in calcul. La a treia inmultire nu pot 
+    tine cont de ambele matrici, deoarece nu exista functie pentru asta, din
+    cate am observat, dar tin cont de una dintre acestea. De asemenea nici
+    pentru adunare nu exista functie.
+    - Am dezalocat memoria si am returnat matricea finala.
+
+    solver_neopt:
+    - Am alocat memorie pentru
+        - C: matricea rezultat
+        - A_t, B_t: matricile transpuse
+        - aux1, aux2, aux3: matricile unde tin rezultatele partiale.
+    - Am calculat aux1 <- A x B:
+        - tinand cont ca A este matrice superior triunghiulara, adunam la aux1
+        dupa cu iteratia k = i, deoarece daca am folosi k = 0, s-ar face 
+        accesarea unele indexuri ale caror elemente au valoarea 0 si astfel am
+        avea operatii nefolositoare.
+    - Am calculat aux2 <- aux1 × B_t:
+        - pentru a nu mai calcula transpusa inainte, vom inmulti linie cu linie
+        in loc de linie cu coloana;
+        - operatiile se face astfel: R[i,j] += A[i,k] * B[j,k], schimband 
+        accesarea lui B[k,j] (cum este pentru inmultirea linie cu coloana)
+    - Am calculat aux3 <- A_t x A:
+        - pentru a nu mai calcula transpusa inainte, vom inmulti coloana cu 
+        coloana in loc de linie cu coloana;
+        - operatiile se fac astfel: R[i,j] += A[k,i] * B[k,j], schimband
+        accesarea lui A[i,k] (cum este pentru inmultirea linie cu coloana)
+        - tinem cont ca A este matrice superior triunghiulara, insa in cazul de
+        fata, avem doua matrici de genul acesta;
+        -  m-am gandit ca trebuiesc eliminate operatie care au ca elemente 0,
+        astfel, avand in vedere ca elementele nenule din matrice sunt A[0,0],
+        A[0,1], A[1,1], A[0,2], A[1,2], A[2,2] etc va trebui sa iteram k de la
+        0 la minimul dintre i si j.
+        - De ce minimul dintre i si j? Sa spunem ca vrem sa aflam
+        aux3[0(i), 0(j)]. Daca am merge de la k = i..N mi-ar ignora operatiile
+        corect. Insa la calculul lui aux3[1(i), 0(j)], daca folosesc k = i..N,
+        inca am o operatie nefolositoare, asa ca trebuie sa fac parcurgerea de
+        la k = 0..MIN(i, j).
+    - Am calculat C = aux2 + aux3
+    - Am dezalocat memoria si am returnat matricea finala.
+
+    solver_opt:
+    - Am facut aceleasi lucruri ca la solver_neopt.
+    - Am declarat varaibile folosind keyword-ul "register" deoarece folosirea
+    registrelor este mai rapida decat constructile high-level.
+    - La prima inmultire am schimbat configuratia la i-k-j, deoarece este mai
+    rapida. Pentru restul inmultirilor schimbarea configuratilor aduce
+    performante mai scazute, asa ca nu le-am schimbat.
+    - Pentru N = 1200, cel mai bun rezultat: 11.571587 secunde (fep).
+
+    Probleme de acces la memorie:
+    - All heap blocks were freed -- no leaks are possible.
+
+    Analiza Cachegrind:
+    - I - la o scurta vedere observam ca blas are cu mult mai putine referinte
+    fata de neopt si opt_m, de aici vedem si de ce performanta acestuia este 
+    mult mai buna. Varianta opt_m are cu 22,22% mai putine referinte decat
+    neopt.
+    - I1 - neopt si opt_m au aproape acelasi numar de miss-uri ale
+    instructiunilor first-level, iar blas are cu aproximativ 40% mai multe
+    decat acestea.
+    - LLi - numarul de miss-uri ale instructiunilor de pe ultimul nivel ramane
+    aproximativ acelasi
+    - Rata miss-urilor este 0.00%, fiind nesemnificativa, programul avand loc
+    in cache-ul instructiunilor de la L1.
+    - D - numarul de citiri si scrieri din memorie este de asemenea
+    considerabil mai mic pentru blas, fiind 88,5% mai mic decat opt_m, acesta
+    varianta fiind la fel mai mica cu 70% decat neopt.
+    - D1 - numarul de miss-uri pastreaza acelasi tipar. Miss rate-ul este
+    asemanator pentru blas si neopt, dar opt il are mai mare.
+    - LLd - pe ultimul nivel, intre neopt si opt_m nu exista diferente, dar
+    pentru blas este mai mare. Blas are miss rate-ul 0.2%, iar neopt si opt_m
+    0.0%.
+    - LL - Numarul de referinte de pe ultimul nivel pastreaza tiparul blas < 
+    opt_m < neopt, cu blas semnificatif mai mic. Miss-urile reprezinta suma
+    miss-urilor instructiunilor si ale citirilor si scrierilor din memorie.
+    Miss rate-ul este 0.0% pe acest ultim nivel.
+    - Numarul de branch-uri al lui neopt si opt_m este aproximativ egal, iar
+    blas are cu mult mai putine branch-uri decat acestea.
+    - Numarul de Mispredicts reprezinta timpul irosit in stagiile din pipeline
+    intre fetch si execute, observand ca blas este are o valoare foarte mica
+    fata de restul.
+
+    Analiza comparativa a performantei:
+    - Graficul cu timpii de executie in functie de N se poate observa in
+    Figure_1.png, in urma rularii scriptului python3 plot.py, unde am folosit
+    matplotlib.pyplot.
+    - Am ales reprezentarea grafului pentru valori ale lui N intre 200 si 1600.
+    - Facand o medie intre timpii de executie obtinem urmatoarele valori:
+        - blas: 0.56
+        - neopt: 17.5
+        - opt_m: 9.78
+    - blas este 96,8% mai rapid decat neopt si 94,27% mai rapid decat opt_m
+    iar opt_m este de 44,11% mai rapid decat neopt.
+    - Alte observatii: blas este cu mult superior fata de ambele implementari,
+    iar varianta optimizata este cu aproximativ jumatate mai rapida decat cea
+    neoptimizata.
+
+Implementare:
+    Am implementat tot ce mi s-a cerut.
+    Dificultati:
+        - La solver_blas a durat ceva pana sa imi dau seama ce functii sa
+        folosesc si cum sa le apelez corect.
+        - Tinerea in cont a faptului ca A este matrice superior triunghiulara,
+        ingorarea operatiilor cu 0.
+
+Resurse utilizate:
+    http://www.netlib.org/blas/
+    http://www.netlib.org/lapack/
+    https://ocw.cs.pub.ro/courses/asc/laboratoare/05
+    https://ocw.cs.pub.ro/courses/asc/laboratoare/06
+    https://www.geeksforgeeks.org/understanding-register-keyword/
+    https://www.geeksforgeeks.org/graph-plotting-in-python-set-1/
+    https://valgrind.org/docs/manual/cg-manual.html
